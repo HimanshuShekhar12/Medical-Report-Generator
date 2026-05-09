@@ -1,0 +1,43 @@
+# MedReportGen Requirements
+# Install with: pip install -r requirements.txt
+
+# ── Core Deep Learning ──────────────────────────────────────────────
+torch>=2.0.0
+torchvision>=0.15.0
+
+# ── HuggingFace ─────────────────────────────────────────────────────
+transformers>=4.35.0       # BioGPT, tokenizers
+datasets>=2.14.0           # optional dataset utilities
+huggingface-hub>=0.19.0
+
+# ── Image Processing ────────────────────────────────────────────────
+opencv-python>=4.8.0       # image loading, CLAHE, resize
+Pillow>=10.0.0             # PIL for some transforms
+scikit-image>=0.21.0       # MS-SSIM metric
+
+# ── Data Science ────────────────────────────────────────────────────
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0        # metrics, train/test split helpers
+
+# ── Visualization ───────────────────────────────────────────────────
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ── NLP Metrics ─────────────────────────────────────────────────────
+nltk>=3.8.0                # BLEU score
+rouge-score>=0.1.2         # ROUGE score
+
+# ── Experiment Tracking ─────────────────────────────────────────────
+wandb>=0.16.0              # W&B logging (free account)
+
+# ── Progress + Utilities ────────────────────────────────────────────
+tqdm>=4.65.0
+PyYAML>=6.0.0              # config YAML files
+python-dotenv>=1.0.0       # .env file loading
+
+# ── Demo UI ─────────────────────────────────────────────────────────
+gradio>=4.0.0
+
+# ── Download ────────────────────────────────────────────────────────
+requests>=2.31.0
