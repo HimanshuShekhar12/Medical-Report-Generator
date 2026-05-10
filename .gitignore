@@ -46,3 +46,12 @@ wandb/
 .agents/
 .codex/
 EOF
+
+# DDPM - exclude large files and outputs
+checkpoints/
+outputs/
+data/synthetic/ddpm_generated/
+nohup.out
+*.log
+*.pth
+*.pt
