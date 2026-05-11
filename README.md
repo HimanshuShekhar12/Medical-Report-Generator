@@ -102,3 +102,89 @@ repgenmed/
 ├── outputs/                     # logs + eval results (gitignored)
 └── data/                        # dataset (gitignored)
 ```
+
+## DDPM Evaluation
+
+### Metrics
+
+**MS-SSIM (Multi-Scale Structural Similarity)**
+Measures structural similarity between individual real and synthetic image
+pairs at multiple scales. Better than simple pixel comparison as it captures
+perceptual quality.
+- Range: 0 (completely different) to 1 (identical)
+- Target: > 0.6
+- Limitation: scores are sensitive to random pairing — a synthetic fibrosis
+  image compared to a random real atelectasis image will naturally score low.
+
+**FID (Fréchet Inception Distance)**
+Measures how similar the distribution of synthetic images is to real images
+using deep features from InceptionV3. Unlike MS-SSIM, FID compares entire
+distributions rather than individual pairs — making it the more meaningful
+metric for generative model evaluation.
+- Range: 0 (identical distributions) to ∞
+- Target: < 50 (excellent), < 150 (acceptable)
+- Lower is better
+
+**Pathology Preservation (Target Probability)**
+Runs a DenseNet121 classifier (CheXNet-style, pretrained on chest X-rays)
+on synthetic images to verify the generated images actually contain the
+target disease features — not just generic chest X-ray appearance.
+- Range: 0 to 1
+- Target: > 0.3 (disease features recognizable by classifier)
+- Most clinically meaningful metric for this project
+
+---
+
+### v1 Results — Baseline
+*Config: base_channels=32, linear noise schedule, guidance_scale=3.0*
+
+| Class | Synthetic | MS-SSIM | FID | Path.Prob | Status |
+|-------|-----------|---------|-----|-----------|--------|
+| fibrosis | 443 | 0.168 | 344.9 | 0.601 | ✅ PASS |
+| hernia | 397 | 0.186 | 383.3 | 0.442 | ✅ PASS |
+| emphysema | 258 | 0.145 | 430.5 | 0.500 | ✅ PASS |
+| calcification | 172 | 0.194 | 226.6 | 0.462 | ✅ PASS |
+| mass | 133 | 0.155 | 283.9 | 0.492 | ✅ PASS |
+| fracture | 105 | 0.188 | 351.6 | 0.546 | ✅ PASS |
+| nodule | 148 | 0.175 | 305.1 | 0.335 | ✅ PASS |
+| pneumonia | 5 | 0.166 | 426.7 | 0.493 | ✅ PASS |
+| edema | 112 | 0.155 | 398.1 | 0.566 | ✅ PASS |
+| cardiomegaly | 141 | 0.181 | 395.6 | 0.540 | ✅ PASS |
+| atelectasis | 56 | 0.169 | 444.9 | 0.453 | ✅ PASS |
+| infiltrate | 82 | 0.158 | 431.3 | 0.443 | ✅ PASS |
+| opacity | 106 | 0.217 | 232.2 | 0.381 | ✅ PASS |
+
+**v1 Analysis:**
+
+✅ Pathology preservation passes all 13 classes (target_prob > 0.3)
+— generated images contain disease-relevant features recognizable
+by a pretrained chest X-ray classifier.
+
+❌ FID scores high (226–444) — large distribution gap vs real images.
+Synthetic images are not yet photorealistic.
+
+⚠️ MS-SSIM low (0.14–0.21) — partially expected due to random pairing
+methodology, but also reflects the visual quality gap.
+
+**Root cause analysis:**
+
+The high contrast, washed-out, near-inverted appearance of v1 samples
+has two causes:
+
+1. Guidance scale too high (3.0) relative to model capacity.
+   The class embeddings trained on small datasets (57–443 samples per
+   class) did not converge to strong confident representations. Amplifying
+   a weak conditioning signal by 3.0x pushed pixel values toward extremes,
+   causing oversaturation. Reducing guidance scale will bring generated
+   images closer to realistic chest X-ray appearance while still steering
+   toward the target class.
+
+2. Model capacity too low (base_channels=32).
+   Channel progression [32, 64, 128, 256, 512] gave the UNet limited
+   capacity to learn fine-grained class-specific texture details,
+   especially for rare classes with fewer than 100 real samples.
+
+---
+
+#### v2 — In Progress
+*Architectural improvements underway to improve FID and image quality.*
