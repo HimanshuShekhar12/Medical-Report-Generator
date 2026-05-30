@@ -188,3 +188,22 @@ has two causes:
 
 #### v2 — In Progress
 *Architectural improvements underway to improve FID and image quality.*
+
+### v2 (Improved Attempt) — base_channels=32, cosine schedule, guidance=1.5
+- 19 epochs, early stopping
+- Val loss: 0.0287
+- Result: Failed — pure noise images generated
+- Root cause: 90M parameter model overfitted on small dataset 
+  (3,140 frontal-only images). Too much capacity for too little data.
+- Learning: For small medical datasets (~5K images), model capacity 
+  must match data size. base_channels=32 (23M params) generalizes 
+  better than base_channels=64 (90M params). This aligns with the 
+  bias-variance tradeoff in limited-data medical imaging.
+
+---
+
+### Final Decision — v1 Synthetic Images Used for Downstream Training
+- 13 rare classes augmented to 500 samples each
+- Pathology preservation passes all classes (target_prob > 0.3)
+- Evaluated with MS-SSIM, FID, and DenseNet121-based pathology check
+- Proceeding to Phase 3 (VAE) with v1 synthetic data
