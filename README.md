@@ -38,7 +38,7 @@ report generation pipeline.
 | infiltrate    |  418 |        82 |   500 |
 | opacity       |  394 |       106 |   500 |
 
-- Status: Sampling in progress → evaluation pending
+- Status: completed
 
 ### Phase 3 — VAE (Variational Autoencoder)
 - Encodes X-ray images into compact latent representations
