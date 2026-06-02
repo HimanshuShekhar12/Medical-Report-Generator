@@ -40,7 +40,7 @@ report generation pipeline.
 
 - Status: completed
 
-### Phase 3 — VAE (Variational Autoencoder)
+### Phase 3 — VAE (Variational Autoencoder) :- Completed
 - Encodes X-ray images into compact latent representations
 - Latent vectors passed to report generation model
 - Status: Pending
@@ -230,4 +230,5 @@ has two causes:
 - 9/13 classes improved FID over v1 baseline ✅
 - Top-1 accuracy improved for atelectasis (45%) and fracture (35%) ✅
 
-### Phase 2 Status: ✅ Complete — Proceeding to Phase 3 (VAE)
+### Phase 2 Status: ✅ Complete
+### phase 3 statues: ✅ Complete, Still Working on Architecture of VAE(Encoder & Decoder) to improve the quality of reconstruted Image.
