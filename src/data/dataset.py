@@ -52,23 +52,31 @@ class XRayDataset(Dataset):
     """
 
     # Map pathology name → integer class index
+    # 18 classes total
     LABEL_MAP = {
         "normal"        : 0,
-        "cardiomegaly"  : 1,
-        "effusion"      : 2,
-        "infiltrate"    : 3,
-        "pneumonia"     : 4,
-        "atelectasis"   : 5,
-        "pneumothorax"  : 6,
-        "edema"         : 7,
-        "consolidation" : 8,
-        "pleural"       : 9,
-        "mass"          : 10,
-        "nodule"        : 11,
-        "opacity"       : 12,
-        "other"         : 13,
+        "effusion"      : 1,
+        "pleural"       : 2,
+        "pneumothorax"  : 3,
+        "consolidation" : 4,
+        "infiltrate"    : 5,
+        "opacity"       : 6,
+        "atelectasis"   : 7,
+        "edema"         : 8,
+        "cardiomegaly"  : 9,
+        "nodule"        : 10,
+        "pneumonia"     : 11,
+        "fracture"      : 12,
+        "mass"          : 13,
+        "calcification" : 14,
+        "emphysema"     : 15,
+        "hernia"        : 16,
+        "fibrosis"      : 17,
     }
-    NUM_CLASSES = len(LABEL_MAP)
+
+    NUM_CLASSES = len(LABEL_MAP)  # 18
+        
+  
 
     def __init__(
         self,
@@ -107,14 +115,25 @@ class XRayDataset(Dataset):
                 if not img_path.exists():
                     continue
 
-                # Get primary label (first one listed)
+                # Get ALL labels (not just first one)
                 raw_labels = row["labels"].split("|")
-                primary    = raw_labels[0] if raw_labels else "other"
-                label_idx  = self.LABEL_MAP.get(primary, self.LABEL_MAP["other"])
+                valid_labels = [l for l in raw_labels if l in self.LABEL_MAP]
+
+                if not valid_labels:
+                    continue
+
+                # Keep primary label for DDPM conditioning (backward compatible)
+                label_idx = self.LABEL_MAP[valid_labels[0]]
+
+                # Multi-hot vector for classifier training
+                multi_hot = [0] * self.NUM_CLASSES
+                for l in valid_labels:
+                    multi_hot[self.LABEL_MAP[l]] = 1
 
                 samples.append({
                     "image_path": img_path,
-                    "label"     : label_idx,
+                    "label"     : label_idx,      # used by DDPM (single class)
+                    "multi_hot" : multi_hot,       # used by classifier (all classes)
                     "report_id" : row["report_id"],
                 })
         return samples
@@ -146,9 +165,10 @@ class XRayDataset(Dataset):
         img_tensor = img_tensor.unsqueeze(0)  # add channel dim
 
         return {
-            "image"     : img_tensor,           # [1, 256, 256]
-            "label"     : sample["label"],       # int
-            "report_id" : sample["report_id"],   # str
+            "image"     : img_tensor,                    # [1, 256, 256]
+            "label"     : sample["label"],                # int (primary, for DDPM)
+            "multi_hot" : torch.tensor(sample["multi_hot"], dtype=torch.float32),  # [18]
+            "report_id" : sample["report_id"],            # str
         }
 
 
