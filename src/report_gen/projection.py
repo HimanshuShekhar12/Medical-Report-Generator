@@ -40,44 +40,36 @@ class VisualProjection(nn.Module):
     def __init__(
         self,
         latent_channels : int = 256,
-        num_tokens       : int = 16,
-        biogpt_dim       : int = 768,
+        num_tokens       : int = 32,
+        biogpt_dim       : int = 1024,
     ):
         super().__init__()
         self.num_tokens = num_tokens
 
-        # Step 1: pool 16x16 spatial map down to `num_tokens` positions
-        # AdaptiveAvgPool2d can target any output size, here we pick
-        # a 4x4 grid = 16 tokens (matches num_tokens default)
-        grid_size = int(num_tokens ** 0.5)   # 16 → 4x4 grid
-        self.pool = nn.AdaptiveAvgPool2d((grid_size, grid_size))
+        # Pool all spatial positions (16×16=256) down to exactly num_tokens.
+        # 1D adaptive pool works for any num_tokens value — no perfect-square
+        # requirement unlike the old 2D grid approach (which silently gave
+        # int(sqrt(32))^2 = 25 tokens instead of 32).
+        self.pool = nn.AdaptiveAvgPool1d(num_tokens)
 
-        # Step 2: project channel depth (256) to BioGPT hidden size (768)
         self.projection = nn.Sequential(
             nn.Linear(latent_channels, biogpt_dim),
             nn.LayerNorm(biogpt_dim),
             nn.GELU(),
+            nn.Dropout(0.1),
             nn.Linear(biogpt_dim, biogpt_dim),
         )
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
         Input:  z [B, 256, 16, 16]   VAE latent
-        Output:   [B, num_tokens, 768]  visual tokens for BioGPT
+        Output:   [B, num_tokens, biogpt_dim]  visual tokens for BioGPT
         """
         B, C, H, W = z.shape
-
-        # Step 1: pool spatial dims down to grid_size x grid_size
-        z = self.pool(z)                          # [B, 256, 4, 4]
-
-        # Step 2: flatten spatial grid into a sequence
-        z = z.flatten(2)                           # [B, 256, 16]
-        z = z.transpose(1, 2)                      # [B, 16, 256]  (seq_len, channels)
-
-        # Step 3: project each token's channel vector to BioGPT dim
-        visual_tokens = self.projection(z)         # [B, 16, 768]
-
-        return visual_tokens
+        z = z.flatten(2)        # [B, 256, 256]  flatten spatial dims
+        z = self.pool(z)        # [B, 256, num_tokens]
+        z = z.transpose(1, 2)  # [B, num_tokens, 256]
+        return self.projection(z)
 
 
 # ── Quick Test ─────────────────────────────────────────────────────

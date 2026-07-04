@@ -139,10 +139,12 @@ class Conditioning(nn.Module):
         # inject into UNet blocks
     """
 
-    def __init__(self, num_classes: int = 14, dim: int = 256):
+    def __init__(self, num_classes: int = 18, dim: int = 256):
         super().__init__()
         self.timestep_embed = TimestepEmbedding(dim)
         self.class_embed    = ClassEmbedding(num_classes, dim)
+
+
 
     def forward(
         self,
@@ -155,7 +157,7 @@ class Conditioning(nn.Module):
         """
         t_emb = self.timestep_embed(t)          # [B, dim]
         c_emb = self.class_embed(class_idx)     # [B, dim]
-        return t_emb + c_emb                    # [B, dim]
+        return t_emb+c_emb
 
 
 # ------------------------------------------------------------------ #

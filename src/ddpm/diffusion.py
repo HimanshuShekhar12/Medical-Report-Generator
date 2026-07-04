@@ -105,7 +105,23 @@ class DDPM(nn.Module):
         After t=1000: image is essentially pure Gaussian noise.
         """
         return np.linspace(beta_start, beta_end, timesteps)
+    
+    @staticmethod
+    def _cosine_beta_schedule(timesteps: int) -> np.ndarray:
+        """
+        Cosine schedule: beta follows a cosine curve.
 
+        Starts with very small noise, increases more gradually,
+        then ramps up near the end. Often produces better samples.
+        """
+        s = 0.008  # small offset to prevent beta=0 at t=0
+        x = np.linspace(0, timesteps, timesteps + 1)
+        alphas_cumprod = np.cos(((x / timesteps) + s) / (1 + s) * np.pi / 2) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]  # normalize to start at 1
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return np.clip(betas, a_min=0, a_max=0.999)
+        
+    
     # ---------------------------------------------------------------- #
     #  FORWARD PROCESS: add noise to clean image                       #
     # ---------------------------------------------------------------- #
@@ -193,7 +209,7 @@ class DDPM(nn.Module):
         self,
         class_idx     : torch.Tensor,   # [B] which classes to generate
         image_size    : int = 256,
-        guidance_scale: float = 3.0,    # classifier-free guidance strength
+        guidance_scale: float = 3,    # classifier-free guidance strength
     ) -> torch.Tensor:
         """
         Reverse process: pure noise → clean X-ray.
@@ -222,7 +238,7 @@ class DDPM(nn.Module):
         # num_classes index = "null" class in ClassEmbedding
         num_classes = self.conditioning.class_embed.embedding.num_embeddings - 1
         uncond_idx  = torch.full((B,), num_classes, device=device, dtype=torch.long)
-
+        
         # Reverse loop: T → 1
         for t_val in reversed(range(self.timesteps)):
             t = torch.full((B,), t_val, device=device, dtype=torch.long)

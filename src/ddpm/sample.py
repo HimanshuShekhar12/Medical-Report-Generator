@@ -182,12 +182,16 @@ def generate_class(
         )
 
         # Sample from DDPM
+
+        # Generate frontal views specifically
+        view_tensor = torch.zeros(current_batch, dtype=torch.long, device=device)
+
         with torch.no_grad():
             samples = ddpm.sample(
                 class_idx      = class_tensor,
                 image_size     = 256,
                 guidance_scale = guidance_scale,
-            )   # [B, 1, 256, 256]
+            )
 
         # Save each generated image
         for i in range(current_batch):
@@ -327,7 +331,7 @@ def get_config():
     # Must match train.py config
     parser.add_argument("--base_channels", type=int, default=32)
     parser.add_argument("--cond_dim",      type=int, default=256)
-    parser.add_argument("--num_classes",   type=int, default=14)
+    parser.add_argument("--num_classes",   type=int, default=18)
     parser.add_argument("--timesteps",     type=int, default=1000)
 
     return parser.parse_args()

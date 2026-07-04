@@ -93,6 +93,7 @@ def train_one_epoch(
         # -- Move to GPU --
         images    = batch["image"].to(device)      # [B, 1, 256, 256]
         class_idx = batch["label"].to(device)      # [B]
+        
 
 # Fix shape if needed
         if images.dim() == 5:

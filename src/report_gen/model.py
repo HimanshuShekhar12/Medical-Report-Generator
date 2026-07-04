@@ -50,7 +50,7 @@ class MedReportGenerator(nn.Module):
     def __init__(
         self,
         vae_checkpoint : str  = "checkpoints/vae/vae_best.pth",
-        num_tokens     : int  = 16,
+        num_tokens     : int  = 32,
         freeze_vae     : bool = True,
     ):
         super().__init__()
@@ -69,7 +69,7 @@ class MedReportGenerator(nn.Module):
         # Unfreeze only the last 2 transformer layers + output head
         # These are the layers that adapt to our medical report style
         # while earlier layers keep their pretrained medical knowledge
-        for layer in self.biogpt.biogpt.layers[-2:]:
+        for layer in self.biogpt.biogpt.layers[-3:]:
             for param in layer.parameters():
                 param.requires_grad = True
 
@@ -141,10 +141,11 @@ class MedReportGenerator(nn.Module):
         combined_embeds = torch.cat([visual_tokens, text_embeds], dim=1)
         # shape: [B, num_tokens + seq_len, 768]
 
-        # Step 4: build attention mask (all 1s — both visual and text are valid)
-        visual_mask = torch.ones(B, self.num_tokens, device=image.device)
-        text_mask   = (input_ids != self.tokenizer.pad_token_id).float()
-        combined_mask = torch.cat([visual_mask, text_mask], dim=1)
+        # Step 4: build attention mask — all 1s for every position.
+        # Padding positions are already ignored via -100 in labels, so we
+        # don't need to hide them from BioGPT. Zeroing them out causes newer
+        # transformers to compress the output length, breaking shape alignment.
+        combined_mask = torch.ones(B, self.num_tokens + input_ids.size(1), device=image.device)
 
         # Step 5: build labels — visual tokens get -100 (ignored in loss)
         if labels is not None:
@@ -156,13 +157,27 @@ class MedReportGenerator(nn.Module):
             combined_labels = None
 
         # Step 6: forward through BioGPT using embeddings directly
+        # Don't pass labels to BioGPT — newer transformers versions have a
+        # bug where they filter logits by non-(-100) count but leave labels
+        # unfiltered, causing a shape mismatch. Compute loss manually instead.
         outputs = self.biogpt(
             inputs_embeds  = combined_embeds,
             attention_mask = combined_mask,
-            labels         = combined_labels,
         )
 
-        return outputs   # outputs.loss, outputs.logits available
+        loss = None
+        if combined_labels is not None:
+            logits       = outputs.logits                        # [B, L, vocab]
+            shift_logits = logits[:, :-1, :].contiguous()       # [B, L-1, vocab]
+            shift_labels = combined_labels[:, 1:].contiguous()  # [B, L-1]
+            loss = nn.functional.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
+                ignore_index = -100,
+            )
+
+        from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
+        return CausalLMOutputWithCrossAttentions(loss=loss, logits=outputs.logits)
 
     @torch.no_grad()
     def generate(
@@ -185,12 +200,15 @@ class MedReportGenerator(nn.Module):
         )
 
         generated = self.biogpt.generate(
-            inputs_embeds   = visual_tokens,
-            attention_mask  = visual_mask,
-            max_length      = max_length,
-            num_beams       = num_beams,
-            early_stopping  = True,
-            pad_token_id    = self.tokenizer.pad_token_id,
+            inputs_embeds      = visual_tokens,
+            attention_mask     = visual_mask,
+            max_new_tokens     = max_length,
+            min_new_tokens     = 20,
+            num_beams          = num_beams,
+            early_stopping     = True,
+            repetition_penalty = 1.3,
+            pad_token_id       = self.tokenizer.pad_token_id,
+            eos_token_id       = self.tokenizer.eos_token_id,
         )
 
         report_text = self.tokenizer.decode(generated[0], skip_special_tokens=True)

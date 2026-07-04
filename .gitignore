@@ -54,4 +54,5 @@ data/synthetic/ddpm_generated/
 nohup.out
 *.log
 *.pth
-*.pt
+*.pt__pycache__/
+*.pyc

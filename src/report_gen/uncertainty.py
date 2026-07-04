@@ -78,12 +78,15 @@ def mc_dropout_generate(
 
     for _ in range(num_passes):
         generated_ids = model.biogpt.generate(
-            inputs_embeds  = model.encode_image(image),
-            attention_mask = torch.ones(1, model.num_tokens, device=image.device),
-            max_length     = max_length,
-            num_beams      = 1,        # greedy for speed across N passes
-            do_sample      = False,
-            pad_token_id   = model.tokenizer.pad_token_id,
+            inputs_embeds      = model.encode_image(image),
+            attention_mask     = torch.ones(1, model.num_tokens, device=image.device),
+            max_new_tokens     = max_length,
+            min_new_tokens     = 20,
+            num_beams          = 1,
+            do_sample          = False,
+            repetition_penalty = 1.3,
+            pad_token_id       = model.tokenizer.pad_token_id,
+            eos_token_id       = model.tokenizer.eos_token_id,
             output_scores          = True,
             return_dict_in_generate = True,
         )
@@ -91,23 +94,38 @@ def mc_dropout_generate(
         text = model.tokenizer.decode(generated_ids.sequences[0], skip_special_tokens=True)
         reports.append(text)
 
-    # ── Agreement-based uncertainty ───────────────────────────────
-    # Simple, robust approach: how often does the MOST COMMON
-    # generated report match across the N passes?
-    # High agreement → low uncertainty. Low agreement → high uncertainty.
-    from collections import Counter
-    counts = Counter(reports)
-    most_common_report, most_common_count = counts.most_common(1)[0]
-    agreement_ratio = most_common_count / num_passes
+    # ── ROUGE-L similarity uncertainty ───────────────────────────────
+    # Exact string match is too strict for text — "No acute disease"
+    # and "No acute abnormality" are clinically identical but count
+    # as 0% agreement. ROUGE-L measures word-overlap similarity,
+    # so near-identical reports score ~0.9 rather than 0.
+    from rouge_score import rouge_scorer as rouge_lib
+    scorer = rouge_lib.RougeScorer(["rougeL"], use_stemmer=True)
 
-    uncertainty_score = 1.0 - agreement_ratio   # 0 = fully certain, 1 = fully uncertain
+    n = len(reports)
+    pairwise_scores = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            s = scorer.score(reports[i], reports[j])["rougeL"].fmeasure
+            pairwise_scores.append(s)
+
+    mean_similarity   = sum(pairwise_scores) / len(pairwise_scores) if pairwise_scores else 1.0
+    uncertainty_score = 1.0 - mean_similarity   # 0 = fully certain, 1 = fully uncertain
+
+    # Pick the "centroid" report — the one most similar to all others
+    best_report, best_avg = reports[0], -1.0
+    for i, r in enumerate(reports):
+        others = [reports[j] for j in range(n) if j != i]
+        avg = sum(scorer.score(r, o)["rougeL"].fmeasure for o in others) / len(others)
+        if avg > best_avg:
+            best_avg, best_report = avg, r
 
     return {
         "reports"           : reports,
-        "most_common_report": most_common_report,
-        "agreement_ratio"   : agreement_ratio,
+        "most_common_report": best_report,
+        "mean_similarity"   : mean_similarity,
         "uncertainty_score" : uncertainty_score,
-        "status"            : "AUTO-APPROVE" if uncertainty_score < 0.3 else "FLAG FOR REVIEW",
+        "status"            : "AUTO-APPROVE" if uncertainty_score < 0.15 else "FLAG FOR REVIEW",
     }
 
 
@@ -141,7 +159,7 @@ def main():
     print("MC Dropout Uncertainty Report")
     print("="*55)
     print(f"Most common report : {result['most_common_report'][:200]}")
-    print(f"Agreement ratio    : {result['agreement_ratio']:.2%}")
+    print(f"Mean ROUGE-L sim   : {result['mean_similarity']:.2%}")
     print(f"Uncertainty score  : {result['uncertainty_score']:.3f}")
     print(f"Status             : {result['status']}")
     print("\nAll generated variants:")
