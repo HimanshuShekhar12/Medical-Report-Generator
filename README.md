@@ -1,167 +1,99 @@
-# MedReportGen
-**Multimodal Medical Report Generator — DDPM + VAE + BioGPT**
+# MedReportGen — Chest X-Ray Report Generator
 
-Generates structured radiology reports from chest X-ray images.
-Solves the rare-disease class imbalance problem by first generating synthetic X-rays
-using a diffusion model, then training the report generator on the balanced dataset.
+**DDPM · VAE · BioGPT · CheXNet**
+
+Generates structured radiology reports from chest X-ray images using a 4-stage AI pipeline.
+Solves the rare-disease class imbalance problem by generating synthetic X-rays with a diffusion model,
+then training the report generator and classifier on the balanced dataset.
+
+**Live Demo:** [himanshushekhars/medreportgen on HuggingFace Spaces](https://huggingface.co/spaces/himanshushekhars/medreportgen)
 
 ---
 
-## How it works (big picture)
+> **Medical Disclaimer**
+>
+> This is a **research prototype only**. It is not a medical device and has not been validated
+> for clinical use. Do **not** use this tool to diagnose, treat, or make any clinical decision
+> about a patient. Always consult a qualified radiologist or physician.
+> Results may be incorrect, incomplete, or misleading.
+
+---
+
+## Demo Screenshot
+
+![MedReportGen Demo](assets/demo.png)
+
+The demo takes a chest X-ray image and returns:
+- A generated radiology report (FINDINGS + IMPRESSION)
+- A bar chart of pathology probabilities for 18 classes
+- A consistency table comparing what the report says vs what the classifier detects
+- A final gate decision: **AUTO-APPROVE** (consistent + confident) or **FLAG FOR REVIEW** (mismatch or uncertain)
+
+---
+
+## How the Pipeline Works
 
 ```
-Chest X-Ray Image
+Chest X-Ray (PNG)
        │
        ▼
-┌─────────────┐     ┌──────────────────┐     ┌───────────────────┐
-│  VAE Encoder│────▶│ Visual Projection │────▶│  BioGPT (fine-   │
-│  (Phase 3)  │     │    (num_tokens=32)│     │  tuned on CXR)   │
-└─────────────┘     └──────────────────┘     └────────┬──────────┘
-                                                       │
-                                              Generated Report Text
-                                                       │
-       ┌───────────────────────────────────────────────┤
-       │                                               │
-       ▼                                               ▼
-┌─────────────────┐                       ┌────────────────────────┐
-│ CheXNet (Phase 4)│                      │  Consistency Check     │
-│ 18-class probs   │─────────────────────▶│  (Phase 6)             │
-└─────────────────┘                       └────────────┬───────────┘
-                                                       │
-                                          ┌────────────▼───────────┐
-                                          │  AUTO-APPROVE  ✅       │
-                                          │  FLAG FOR REVIEW ⚠️     │
-                                          └────────────────────────┘
+┌──────────────┐    ┌───────────────────┐    ┌──────────────────────┐
+│  VAE Encoder │───▶│ Visual Projection  │───▶│  BioGPT (fine-tuned) │
+│  (frozen)    │    │  32 visual tokens  │    │  report generation   │
+└──────────────┘    └───────────────────┘    └──────────┬───────────┘
+                                                         │
+                                               Generated Report Text
+                                                         │
+              ┌──────────────────────────────────────────┤
+              │                                          │
+              ▼                                          ▼
+┌─────────────────────┐                  ┌──────────────────────────┐
+│ CheXNet Classifier  │                  │  Keyword Consistency Gate │
+│ 18-class sigmoid    │─────────────────▶│  report text vs probs    │
+│ (DenseNet121)       │                  └──────────────┬───────────┘
+└─────────────────────┘                                 │
+                                         ┌──────────────▼───────────┐
+                                         │  AUTO-APPROVE  ✅         │
+                                         │  FLAG FOR REVIEW  ⚠️      │
+                                         └──────────────────────────┘
 ```
+
+### Stage 1 — VAE Encoder
+The chest X-ray `[B, 1, 256, 256]` is passed through a trained Variational Autoencoder.
+The encoder compresses it into a compact latent vector `[B, 256, 16, 16]`.
+The VAE is frozen at this stage — we only use it as a feature extractor.
+
+### Stage 2 — Visual Projection + BioGPT
+The latent vector is passed through a trainable `VisualProjection` layer that maps it into
+32 visual tokens `[B, 32, 1024]` — the same size as BioGPT word embeddings.
+These tokens are prepended to the text input so BioGPT "sees" the image before generating text.
+Only the last 3 BioGPT transformer layers and the output head are fine-tuned; the rest stays pretrained.
+
+**Output:** A structured report with FINDINGS and IMPRESSION sections.
+
+### Stage 3 — CheXNet Classifier
+A DenseNet121 backbone with a multi-label sigmoid output head predicts probabilities for 18 pathology classes independently.
+Sigmoid (not softmax) is used because a patient can have multiple conditions simultaneously.
+Per-class thresholds are tuned to maximise F1.
+
+**Output:** A probability vector — one score per pathology (0 to 1).
+
+### Stage 4 — Consistency Gate
+The report text is scanned for clinical keywords (e.g. "effusion", "pneumothorax", "consolidation").
+These are compared against the classifier's predictions.
+If the report mentions a condition but the classifier disagrees (or vice versa), the system flags it for human review.
+Clinically critical mismatches (effusion, pneumothorax, cardiomegaly, etc.) always trigger the flag.
+
+**Output:** AUTO-APPROVE or FLAG FOR REVIEW.
 
 ---
 
-## Project Status
+## Results
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Data Pipeline | ✅ Complete |
-| 2 | DDPM — Synthetic X-Ray Generation | ✅ Complete |
-| 3 | VAE — Image Encoder | ✅ Complete |
-| 4 | CheXNet — Pathology Classifier | ✅ Complete |
-| 5 | BioGPT — Report Generation | ✅ Complete |
-| 6 | End-to-End Pipeline + Consistency Gate | ✅ Complete |
-| 7 | Gradio Demo UI (PWA-ready) | ✅ Complete |
+### DDPM Synthetic Data Generation
 
----
-
-## Quick Start
-
-### 1. Install dependencies
-```bash
-pip install -r requirements.txt
-pip install -e .
-```
-
-### 2. Run the demo (requires trained checkpoints)
-```bash
-# Local demo
-python3 src/demo/app.py
-
-# Share publicly (1-week link)
-python3 src/demo/app.py --share
-
-# Custom port
-python3 src/demo/app.py --port 7861
-```
-
-### 3. Run on a single image (CLI)
-```bash
-python3 src/pipeline/run_pipeline.py --image_path data/processed/images/CXR1000_IM-0003-1001.png
-```
-
-### 4. With uncertainty estimation
-```bash
-python3 src/pipeline/run_pipeline.py --image_path <path> --uncertainty --json_out outputs/result.json
-```
-
----
-
-## Project Structure
-
-```
-repgenmed/
-├── src/
-│   ├── data/
-│   │   ├── download.py          # download OpenI dataset
-│   │   ├── parse_reports.py     # XML reports → findings + impression
-│   │   ├── preprocess.py        # resize, normalize images
-│   │   ├── augment.py           # augmentation (horizontal flip)
-│   │   └── dataset.py           # PyTorch Dataset classes
-│   │
-│   ├── ddpm/
-│   │   ├── diffusion.py         # DDPM forward + reverse process (linear + cosine schedule)
-│   │   ├── conditioning.py      # timestep + class embeddings (18 classes)
-│   │   ├── unet.py              # UNet backbone
-│   │   ├── train.py             # DDPM training loop
-│   │   ├── sample.py            # generate synthetic X-rays per class
-│   │   └── evaluate.py          # MS-SSIM, FID, pathology preservation
-│   │
-│   ├── vae/
-│   │   ├── encoder.py           # CNN encoder → latent [B, 256, 16, 16]
-│   │   ├── decoder.py           # latent → reconstructed image
-│   │   ├── vae.py               # VAE (KL loss + reconstruction loss)
-│   │   ├── train.py             # VAE training loop
-│   │   └── evaluate.py          # reconstruction quality metrics
-│   │
-│   ├── classifier/
-│   │   ├── chexnet.py           # DenseNet121 multi-label classifier (18 classes)
-│   │   ├── train.py             # classifier training (baseline + augmented)
-│   │   └── evaluate.py          # per-class AUC, F1, ablation study table
-│   │
-│   ├── report_gen/
-│   │   ├── model.py             # MedReportGenerator (VAE + Projection + BioGPT)
-│   │   ├── projection.py        # VisualProjection: latent → 32 visual tokens
-│   │   ├── train.py             # BioGPT fine-tuning
-│   │   ├── generate.py          # inference: image → report text
-│   │   ├── evaluate.py          # BLEU, ROUGE metrics
-│   │   └── uncertainty.py       # MC Dropout uncertainty estimation
-│   │
-│   ├── pipeline/
-│   │   ├── consistency_check.py # compare report text vs classifier predictions
-│   │   └── run_pipeline.py      # end-to-end CLI: image → report → gate decision
-│   │
-│   └── demo/
-│       └── app.py               # Gradio web UI
-│
-├── spaces_app.py                # HuggingFace Spaces entry point
-├── checkpoints/                 # trained model weights (gitignored)
-├── outputs/                     # logs, eval results (gitignored)
-├── data/                        # dataset (gitignored)
-├── requirements.txt
-└── setup.py
-```
-
----
-
-## Dataset
-
-**OpenI Indiana University Chest X-ray Dataset**
-- 7,430 images across 3,955 patient studies
-- Frontal (PA) + lateral views
-- XML radiology reports with findings and impression sections
-- Source: https://openi.nlm.nih.gov
-
----
-
-## Phase Details
-
-### Phase 1 — Data Pipeline
-- Parse XML reports → extract `findings` and `impression` sections
-- Assign 18 pathology labels per study
-- Split into train / val / test
-
-### Phase 2 — DDPM (Synthetic Data Generation)
-
-**Why?** Many pathology classes have very few real samples (e.g. fibrosis = 57 images).
-The DDPM generates synthetic X-rays for each rare class to balance the dataset to 500 samples per class.
-
-**Architecture:** UNet with timestep + class conditioning, 1000 diffusion steps
+Many rare pathology classes have very few real training images (e.g. fibrosis = 57 images).
+The DDPM generates synthetic X-rays to balance every class to 500 samples.
 
 | Class | Real | Synthetic | Total |
 |-------|------|-----------|-------|
@@ -178,7 +110,7 @@ The DDPM generates synthetic X-rays for each rare class to balance the dataset t
 | infiltrate | 418 | 82 | 500 |
 | opacity | 394 | 106 | 500 |
 
-**Final DDPM Results** (val_loss: 0.0159, base_channels=32, linear schedule):
+**Generation quality** (val_loss: 0.0159):
 
 | Class | MS-SSIM | FID | Pathology Prob | Status |
 |-------|---------|-----|----------------|--------|
@@ -196,97 +128,117 @@ The DDPM generates synthetic X-rays for each rare class to balance the dataset t
 | opacity | 0.207 | 329.1 | 0.490 | ✅ PASS |
 | pneumonia | 0.203 | 513.5 | 0.537 | ✅ PASS |
 
-> Pathology Prob > 0.3 means a pretrained CheXNet classifier recognises the target disease in the generated image — all 13 classes pass.
+**What these metrics mean:**
+- **MS-SSIM** — structural similarity to real images. Low values are partly expected because pairing is random.
+- **FID** — distribution distance between real and synthetic (lower = more realistic). High FID means images are not photorealistic, but disease features are still preserved.
+- **Pathology Prob** — the most clinically meaningful metric: does a pretrained classifier recognise the target disease in the generated image? All 13 classes score > 0.3, meaning the synthetic images carry the right pathology signal.
 
-**What the metrics mean:**
-- **MS-SSIM** — structural similarity to real images (higher = more similar). Low scores are partly expected due to random pairing.
-- **FID** — distribution gap between real and synthetic (lower = better). High FID means images aren't photorealistic, but pathology features are preserved.
-- **Pathology Prob** — most clinically meaningful: does the generated image actually look like the target disease?
+### Classifier Ablation (Baseline vs DDPM-Augmented)
 
-### Phase 3 — VAE (Variational Autoencoder)
-- Encodes X-ray images into a compact latent space: `[B, 1, 256, 256]` → `[B, 256, 16, 16]`
-- Trained with reconstruction loss + KL divergence
-- The encoder is frozen and reused in the report generation pipeline
+The classifier was trained twice — once on real data only, once on real + synthetic data.
+11 out of 24 rare-class metrics improved with synthetic augmentation.
+The mixed results are honest: high FID scores mean some synthetic images are not photorealistic enough
+to fool the classifier into learning better features for every class.
 
-### Phase 4 — CheXNet Classifier
-- DenseNet121 backbone with multi-label sigmoid output (18 classes)
-- Trained twice: **baseline** (real data only) vs **augmented** (real + synthetic)
-- Per-class threshold tuning to maximise F1
-- Ablation study proves DDPM synthetic data improves rare-class F1
+### Report Generation
 
-### Phase 5 — BioGPT Report Generation
+BioGPT fine-tuned on the OpenI dataset generates FINDINGS + IMPRESSION text from the visual prefix.
+The model is evaluated with BLEU and ROUGE-L scores against ground-truth radiology reports.
+MC Dropout uncertainty estimation runs 20 stochastic passes and measures pairwise ROUGE-L similarity.
+Low similarity across passes → high uncertainty → FLAG FOR REVIEW.
 
-**Architecture (visual prefix approach):**
-```
-Image [B,1,256,256]
-  → VAE Encoder (frozen)     → latent [B, 256, 16, 16]
-  → VisualProjection (1D pool) → 32 visual tokens [B, 32, 768]
-  → prepend to BioGPT input  → report text
-```
+---
 
-**Key implementation details:**
-- Only last 3 BioGPT transformer layers + output head are fine-tuned (rest stays pretrained)
-- Attention mask is all-ones (avoids transformers output-length compression bug)
-- Loss computed manually with cross-entropy (avoids transformers shape-mismatch bug when passing labels directly)
-- Generation uses `repetition_penalty=1.3` and `min_new_tokens=20` to prevent degenerate output
+## Limitations
 
-**Uncertainty estimation (MC Dropout):**
-- Runs 20 stochastic forward passes with dropout active at inference time
-- Measures pairwise ROUGE-L similarity across passes (higher similarity = more certain)
-- Uncertainty score < 0.15 → AUTO-APPROVE; else → FLAG FOR REVIEW
+These are honest limitations of the current system. Understanding them is as important as understanding what it can do.
 
-### Phase 6 — End-to-End Pipeline
+**1. Not photorealistic synthetic images**
+The DDPM generates X-rays that preserve pathology signal (confirmed by classifier probe) but have high FID scores,
+meaning they don't look like real X-rays at a pixel level. This limits the benefit of augmentation for some classes.
+
+**2. Small dataset**
+The OpenI dataset has ~7,400 images across ~3,955 patients. This is small by medical AI standards.
+Models trained on small datasets may not generalise to images from different hospitals, scanners, or patient populations.
+
+**3. Report quality is research-grade**
+BioGPT generates grammatically reasonable reports but they may contain hallucinated findings or miss real ones.
+The model has no grounding mechanism — it cannot point to which region of the image triggered each finding.
+Do not interpret the report as a radiologist's opinion.
+
+**4. Consistency gate is keyword-based**
+The gate compares simple keyword matches between report text and classifier predictions.
+It will miss subtle clinical language ("airspace opacity" vs "consolidation") and may raise false alarms.
+It is a safety net, not a second opinion.
+
+**5. CPU inference is slow**
+On the free HuggingFace Spaces CPU tier, model loading takes ~2 minutes after the Space wakes from sleep (30 min idle).
+Report generation takes ~10-20 seconds per image.
+
+**6. Single view only**
+The pipeline processes only frontal (PA) chest X-rays. Lateral views, CT scans, and other modalities are not supported.
+
+---
+
+## Project Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Data Pipeline | ✅ Complete |
+| 2 | DDPM — Synthetic X-Ray Generation | ✅ Complete |
+| 3 | VAE — Image Encoder | ✅ Complete |
+| 4 | CheXNet — Pathology Classifier | ✅ Complete |
+| 5 | BioGPT — Report Generation | ✅ Complete |
+| 6 | End-to-End Pipeline + Consistency Gate | ✅ Complete |
+| 7 | Gradio Demo UI — Deployed on HuggingFace Spaces | ✅ Complete |
+
+---
+
+## Quick Start (Local)
+
+### 1. Install dependencies
 ```bash
-python3 src/pipeline/run_pipeline.py --image_path <path>
+pip install -r requirements.txt
+pip install -e .
 ```
-1. Load image → generate report (BioGPT)
-2. Run CheXNet → get 18-class probabilities
-3. Compare report keywords vs classifier predictions
-4. Clinical mismatches (effusion, pneumothorax, cardiomegaly, etc.) → FLAG FOR REVIEW
-5. Consistent + low uncertainty → AUTO-APPROVE
 
-### Phase 7 — Demo UI
-Gradio web app with:
-- X-ray image upload
-- Generated report text
-- Pathology probability bar chart (18 classes)
-- Consistency check table (report vs classifier per pathology)
-- Colour-coded gate badge (green = AUTO-APPROVE, red = FLAG FOR REVIEW)
-- Optional MC Dropout uncertainty panel
-
-PWA-installable — works as a mobile/desktop app directly from the browser.
-
-**Deploy to HuggingFace Spaces (permanent hosting):**
+### 2. Run the demo (requires trained checkpoints in `checkpoints/`)
 ```bash
-# 1. Upload checkpoints to HF Hub
-huggingface-cli repo create medreportgen-checkpoints --type model
-# upload vae_best.pth, biogpt_best.pth, chexnet_augmented_best.pth
+python3 src/demo/app.py
+python3 src/demo/app.py --share     # public Gradio tunnel URL
+python3 src/demo/app.py --port 7861
+```
 
-# 2. Create Space
-huggingface-cli repo create medreportgen --type space --space_sdk gradio
-# copy src/, spaces_app.py, requirements.txt → push to Space
+### 3. CLI — single image
+```bash
+python3 src/pipeline/run_pipeline.py --image_path data/processed/images/CXR1000_IM-0003-1001.png
+```
+
+### 4. CLI — with uncertainty estimation
+```bash
+python3 src/pipeline/run_pipeline.py --image_path <path> --uncertainty --json_out outputs/result.json
 ```
 
 ---
 
-## Training (run in order)
+## Training Order
 
 ```bash
 # Phase 1 — prepare data
 python3 src/data/download.py
 python3 src/data/preprocess.py
 
-# Phase 2 — train DDPM and generate synthetic images
+# Phase 2 — train DDPM, generate synthetic images
 python3 src/ddpm/train.py
 python3 src/ddpm/sample.py
 
 # Phase 3 — train VAE
 python3 src/vae/train.py
 
-# Phase 4 — train classifier (baseline, then augmented)
+# Phase 4 — train classifier
 python3 src/classifier/train.py --tag baseline
 python3 src/classifier/train.py --tag augmented --use_balanced
-python3 src/classifier/evaluate.py --tag augmented   # prints ablation table
+python3 src/classifier/evaluate.py --tag augmented   # ablation table
 
 # Phase 5 — fine-tune BioGPT
 python3 src/report_gen/train.py
@@ -297,13 +249,87 @@ python3 src/demo/app.py --share
 
 ---
 
+## Project Structure
+
+```
+repgenmed/
+├── src/
+│   ├── data/
+│   │   ├── download.py          # download OpenI dataset
+│   │   ├── parse_reports.py     # XML reports → findings + impression
+│   │   ├── preprocess.py        # resize, normalize images
+│   │   ├── augment.py           # augmentation (horizontal flip)
+│   │   └── dataset.py           # PyTorch Dataset (18-class labels)
+│   │
+│   ├── ddpm/
+│   │   ├── diffusion.py         # DDPM forward + reverse (linear + cosine schedule)
+│   │   ├── conditioning.py      # timestep + class embeddings (18 classes)
+│   │   ├── unet.py              # UNet backbone
+│   │   ├── train.py             # DDPM training loop
+│   │   ├── sample.py            # generate synthetic X-rays per class
+│   │   └── evaluate.py          # MS-SSIM, FID, pathology preservation
+│   │
+│   ├── vae/
+│   │   ├── encoder.py           # CNN encoder → latent [B, 256, 16, 16]
+│   │   ├── decoder.py           # latent → reconstructed image
+│   │   ├── vae.py               # VAE (KL divergence + reconstruction loss)
+│   │   ├── train.py             # VAE training loop
+│   │   └── evaluate.py          # reconstruction quality metrics
+│   │
+│   ├── classifier/
+│   │   ├── chexnet.py           # DenseNet121 multi-label classifier (18 classes)
+│   │   ├── train.py             # classifier training (baseline + augmented)
+│   │   └── evaluate.py          # per-class AUC, F1, ablation table
+│   │
+│   ├── report_gen/
+│   │   ├── model.py             # MedReportGenerator (VAE + Projection + BioGPT)
+│   │   ├── projection.py        # VisualProjection: latent → 32 visual tokens
+│   │   ├── train.py             # BioGPT fine-tuning loop
+│   │   ├── generate.py          # inference: image → report text
+│   │   ├── evaluate.py          # BLEU, ROUGE-L metrics
+│   │   └── uncertainty.py       # MC Dropout uncertainty (ROUGE-L pairwise)
+│   │
+│   ├── pipeline/
+│   │   ├── consistency_check.py # keyword match: report text vs classifier probs
+│   │   └── run_pipeline.py      # end-to-end CLI: image → report → gate
+│   │
+│   └── demo/
+│       └── app.py               # Gradio web UI (lazy model loading)
+│
+├── spaces_app.py                # HuggingFace Spaces entry point (downloads checkpoints)
+├── assets/
+│   └── demo.png                 # demo screenshot
+├── checkpoints/                 # trained weights (gitignored — too large)
+├── outputs/                     # logs, eval results (gitignored)
+├── data/                        # dataset (gitignored)
+├── requirements.txt
+└── setup.py
+```
+
+---
+
+## Dataset
+
+**OpenI Indiana University Chest X-ray Dataset**
+- 7,430 images across 3,955 patient studies
+- Frontal (PA) + lateral views
+- XML radiology reports with findings and impression sections
+- 18 pathology labels: normal, effusion, pleural, pneumothorax, infiltrate, cardiomegaly,
+  consolidation, atelectasis, opacity, edema, pneumonia, nodule, mass, fracture,
+  calcification, emphysema, hernia, fibrosis
+- Source: https://openi.nlm.nih.gov
+
+---
+
 ## Key Design Decisions
 
 | Decision | Why |
 |----------|-----|
-| DenseNet121 for classifier | Dense connections improve gradient flow for subtle medical features |
-| Sigmoid not Softmax | Patients can have multiple pathologies simultaneously |
-| Visual prefix (not cross-attention) | Keeps BioGPT weights intact; simpler; proven by ClipCap |
-| 1D adaptive pool in projection | Avoids square-root constraint on num_tokens (2D pool breaks for non-perfect-squares like 32) |
+| DenseNet121 for classifier | Dense connections improve gradient flow — important for subtle medical texture features |
+| Sigmoid not Softmax | Patients commonly have multiple pathologies simultaneously |
+| Visual prefix (not cross-attention) | Keeps BioGPT weights intact; cross-attention would require architectural changes that break pretraining |
+| 1D adaptive pool in projection | 2D pool requires a perfect-square num_tokens; sqrt(32) is not an integer — 1D pool avoids this |
 | ROUGE-L for uncertainty | Exact string match is too strict; "No acute disease" and "No acute abnormality" are clinically identical |
-| Manual cross-entropy loss | Newer transformers versions have a shape-mismatch bug when labels are passed directly |
+| Manual cross-entropy loss | Newer transformers versions have a shape-mismatch bug when passing labels directly to the model |
+| Freeze VAE encoder | The VAE is trained separately and used as a frozen feature extractor — fine-tuning it jointly would destabilise BioGPT training |
+| Only last 3 BioGPT layers unfrozen | Balances adaptation to radiology language vs catastrophic forgetting of pretrained biomedical knowledge |
