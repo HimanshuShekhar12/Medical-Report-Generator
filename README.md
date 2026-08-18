@@ -33,33 +33,6 @@ The demo takes a chest X-ray image and returns:
 
 ## How the Pipeline Works
 
-The system runs in two phases: an **offline data engine** (DDPM) that runs once before training,
-and a **live inference pipeline** that runs per image. The diffusion model never runs at inference time —
-it only exists to fix the training set's class imbalance ahead of time.
-
-### Phase 0 — Synthetic Data Engine (training-time only)
-
-```
-Real rare-class X-rays        Class-conditional DDPM              Synthetic X-rays
- (e.g. fibrosis: 57)   ─────▶  UNet + t/class embed   ─────▶   (tops up every class
-                               T=1000, linear β sched.)              to 500 imgs)
-                                                                          │
-                                                                          ▼
-                                                          ┌───────────────────────────┐
-                                                          │   Balanced training set   │
-                                                          │  (real + synthetic mix)   │
-                                                          └─────────────┬─────────────┘
-                                                                        │
-                                                                        ▼
-                                                          ┌───────────────────────────┐
-                                                          │   CheXNet classifier      │
-                                                          │   training (baseline vs.  │
-                                                          │   DDPM-augmented)         │
-                                                          └───────────────────────────┘
-```
-
-### Phase 1 — Inference Pipeline (per image)
-
 ```
 Chest X-Ray (PNG)
        │
@@ -71,20 +44,18 @@ Chest X-Ray (PNG)
                                                          │
                                                Generated Report Text
                                                          │
-              ┌──────────────────────────────────────────┤────────────────────┐
-              │                                          │                    │ (optional)
-              ▼                                          ▼                    ▼
-┌─────────────────────┐                  ┌──────────────────────────┐  ┌─────────────────┐
-│ CheXNet Classifier  │                  │  Keyword Consistency Gate │  │  MC Dropout     │
-│ 18-class sigmoid    │─────────────────▶│  report text vs probs    │  │  Uncertainty    │
-│ (DenseNet121)       │                  └──────────────┬───────────┘  │  (×20 passes)   │
-└─────────────────────┘                                 │              └────────┬────────┘
-                                                         ▼                       │
-                                         ┌───────────────────────────┐          │
-                                         │        Final Gate         │◀─────────┘
+              ┌──────────────────────────────────────────┤
+              │                                          │
+              ▼                                          ▼
+┌─────────────────────┐                  ┌──────────────────────────┐
+│ CheXNet Classifier  │                  │  Keyword Consistency Gate │
+│ 18-class sigmoid    │─────────────────▶│  report text vs probs    │
+│ (DenseNet121)       │                  └──────────────┬───────────┘
+└─────────────────────┘                                 │
+                                         ┌──────────────▼───────────┐
                                          │  AUTO-APPROVE  ✅         │
                                          │  FLAG FOR REVIEW  ⚠️      │
-                                         └───────────────────────────┘
+                                         └──────────────────────────┘
 ```
 
 ### Stage 1 — VAE Encoder
@@ -94,7 +65,7 @@ The VAE is frozen at this stage — we only use it as a feature extractor.
 
 ### Stage 2 — Visual Projection + BioGPT
 The latent vector is passed through a trainable `VisualProjection` layer that maps it into
-32 visual tokens `[B, 32, 768]` — the same size as BioGPT's hidden dimension (768).
+32 visual tokens `[B, 32, 1024]` — the same size as BioGPT word embeddings.
 These tokens are prepended to the text input so BioGPT "sees" the image before generating text.
 Only the last 3 BioGPT transformer layers and the output head are fine-tuned; the rest stays pretrained.
 
